@@ -1,8 +1,1 @@
-*.iml
-*.ipr
-*.iws
-.gradle/**
-.idea/**
-build/**
-
-
+node_modules/
