@@ -14,11 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# [START gke_frontend_genproto]
+# [START gke_adservice_genproto]
+# protos are needed in adservice folder for compiling during Docker build.
 
-PATH=$PATH:$GOPATH/bin
-protodir=../../protos
+mkdir -p proto && \
+cp ../../protos/demo.proto src/main/proto
 
-protoc --go_out=plugins=grpc:genproto -I $protodir $protodir/demo.proto
-
-# [END gke_frontend_genproto]
+# [END gke_adservice_genproto]
