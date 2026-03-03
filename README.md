@@ -314,7 +314,7 @@ DevOps Engineer specializing in AWS, Kubernetes, and CI/CD automation
 
 GitHub: https://github.com/hammad558  
 LinkedIn: https://linkedin.com/in/hammad-khalid99  
-Email: hammadwaraich888@gmail.com
+
 
 ## License
 
