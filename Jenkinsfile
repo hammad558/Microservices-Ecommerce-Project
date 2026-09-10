@@ -1,28 +1,60 @@
+// Per-service pipeline. This exact file sits on each service branch; the
+// only thing that differs is the branch name, which Jenkins supplies.
+// Build -> scan -> push. Tag = git SHA so a deployed pod maps to a commit.
+
 pipeline {
     agent any
 
-    stages {
-        stage('Build & Tag Docker Image') {
-            steps {
-                script {
-                    dir('src') {
+    options { timestamps(); disableConcurrentBuilds() }
 
-                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
-                        sh "docker build -t adijaiswal/cartservice:latest ."
-                    }
-                        }
-                }
-            }
-        }
-        
-        stage('Push Docker Image') {
+    environment {
+        DOCKERHUB_USER = 'hammad558'
+        SERVICE        = "${env.BRANCH_NAME}"
+        IMAGE          = "${DOCKERHUB_USER}/${SERVICE}"
+    }
+
+    stages {
+        stage('Checkout') {
             steps {
-                script {
-                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
-                        sh "docker push adijaiswal/cartservice:latest "
-                    }
+                checkout scm
+                script { env.TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim() }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                // Most services keep the Dockerfile at the branch root; cartservice
+                // keeps it under src/. Pick the context instead of hardcoding one.
+                sh '''
+                  CTX=.
+                  [ -f src/Dockerfile ] && CTX=src
+                  docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" "$CTX"
+                '''
+            }
+        }
+
+        stage('Scan') {
+            steps {
+                sh 'trivy image --severity CRITICAL --ignore-unfixed --exit-code 1 "$IMAGE:$TAG"'
+            }
+        }
+
+        stage('Push') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
+                                                  usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+                    sh '''
+                      echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
+                      docker push "$IMAGE:$TAG"
+                      docker push "$IMAGE:latest"
+                      docker logout
+                    '''
                 }
             }
         }
+    }
+
+    post {
+        always { sh 'docker image prune -f || true' }
     }
 }
