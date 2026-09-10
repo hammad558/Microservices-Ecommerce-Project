@@ -23,9 +23,13 @@ pipeline {
 
         stage('Build') {
             steps {
-                dir('src') {
-                    sh 'docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .'
-                }
+                // Most services keep the Dockerfile at the branch root; cartservice
+                // keeps it under src/. Pick the context instead of hardcoding one.
+                sh '''
+                  CTX=.
+                  [ -f src/Dockerfile ] && CTX=src
+                  docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" "$CTX"
+                '''
             }
         }
 
