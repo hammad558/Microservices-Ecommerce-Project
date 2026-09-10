@@ -1,134 +1,70 @@
-# Microservices E-Commerce Platform
+# Online Boutique on AWS EKS with per-service Jenkins pipelines
 
-A production-grade microservices-based e-commerce application deployed on AWS EKS with automated CI/CD using Jenkins multibranch pipelines.
+Eleven gRPC microservices (Go, C#, Node, Python, Java) built, scanned and deployed independently to an EKS cluster provisioned with Terraform.
 
-## Overview
+> **What's mine and what isn't.** The application is Google's [Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo) (Apache 2.0), the standard multi-language microservices demo. I used it because eleven services in five languages is a realistic build matrix, and because nobody hiring for DevOps cares who wrote the cart service. The Terraform, the Jenkins multibranch setup, the per-service pipelines with image scanning, the RBAC for Jenkins, the deployment job with rollout verification, and the monitoring are my work. Service source code on the service branches is upstream, unmodified except for the Jenkinsfile.
 
-This project implements a complete microservices architecture with 12 independent services. Each service is containerized with Docker, deployed to AWS Elastic Kubernetes Service, and managed through its own automated Jenkins pipeline.
+## How it's organised
 
-## Architecture
-
-The platform uses a microservices architecture where each service operates independently. Services are deployed as containers on AWS EKS and communicate through Kubernetes service mesh. External traffic is routed through an AWS Application Load Balancer to the Kubernetes cluster.
-
-## Microservices
-
-The platform consists of 12 independent microservices:
-
-**Product Catalog Service** - Manages product information, categories, and pricing  
-**Order Service** - Handles order processing and tracking  
-**User Service** - Manages user authentication and profiles  
-**Payment Service** - Processes payments and transactions  
-**Inventory Service** - Tracks stock levels and availability  
-**Shopping Cart Service** - Manages user shopping carts  
-**Notification Service** - Sends email and SMS notifications  
-**Review Service** - Handles product reviews and ratings  
-**Shipping Service** - Manages shipping and logistics  
-**Analytics Service** - Collects and processes business metrics  
-**Search Service** - Provides product search functionality  
-**Recommendation Service** - Generates product recommendations
-
-## Technology Stack
-
-**Cloud Platform:** AWS (EKS, ECR, VPC, ALB)  
-**Containerization:** Docker  
-**Orchestration:** Kubernetes  
-**CI/CD:** Jenkins (Multibranch Pipeline)  
-**Infrastructure as Code:** Terraform  
-**Monitoring:** Prometheus and Grafana
-
-## Key Features
-
-**Independent Service Deployment** - Each service can be deployed independently without affecting others
-
-**Automated CI/CD** - Jenkins multibranch pipelines automatically build and deploy each service
-
-**High Availability** - Multi-AZ deployment with AWS Application Load Balancer
-
-**Scalability** - Kubernetes auto-scaling based on demand
-
-**Zero-Downtime Deployments** - Rolling updates ensure continuous availability
-
-## Repository Structure
-
-The repository uses a multibranch strategy where each microservice has its own branch. The main branch contains the core pipeline configuration and deployment templates. Each service branch includes:
-
-- Service source code
-- Dockerfile
-- Jenkinsfile for automated deployment
-- Service-specific configuration
-
-## CI/CD Implementation
-
-Each of the 12 microservices has its own Jenkins multibranch pipeline. When code is pushed to a service branch, Jenkins automatically:
-
-- Builds the Docker image for that service
-- Runs automated tests
-- Pushes the image to the container registry
-- Deploys the updated service to AWS EKS
-
-This allows independent development and deployment of each service without coordinating releases.
-
-## Deployment
-
-The application runs on AWS EKS with services deployed across multiple availability zones. Kubernetes manages container orchestration, scaling, and health monitoring. The AWS Application Load Balancer distributes incoming traffic across service instances.
-
-## Getting Started
-
-### Prerequisites
-
-- AWS account with EKS access
-- kubectl configured for your cluster
-- Docker installed locally
-- Jenkins server with multibranch pipeline support
-
-### Deployment
-
-Clone the repository:
-```
-git clone https://github.com/hammad558/Microservices-Ecommerce-Project.git
+```mermaid
+flowchart LR
+    subgraph branches[GitHub: one branch per service]
+        A[adservice] --- B[cartservice] --- C[checkoutservice] --- D[...x11]
+    end
+    branches -->|multibranch discovery| J[Jenkins]
+    J -->|per branch: build, Trivy, push| DH[(Docker Hub)]
+    M[main: k8s manifests] -->|deploy job| J2[Jenkins deploy]
+    J2 -->|kubectl apply + rollout status| EKS[EKS cluster]
+    DH --> EKS
+    EKS --> LB[frontend-external LoadBalancer]
+    PROM[Prometheus/Grafana] -.-> EKS
 ```
 
-Deploy to Kubernetes:
+Jenkins multibranch scans the repo and creates one pipeline per branch. A push to `cartservice` builds only the cart service, scans it, and pushes `<handle>/cartservice:<gitsha>` and `:latest`. The deploy job on `main` applies the manifests and blocks until every Deployment's rollout completes, so a bad image fails the build rather than leaving crash-looping pods.
+
+## Repository layout
+
 ```
-kubectl apply -f deployment-service.yml
+main
+├── terraform/     VPC, EKS 1.30, managed node group, EBS CSI (IRSA), Jenkins host
+├── k8s/           Namespace + all 11 Deployments/Services with probes and resource limits
+├── jenkins/       service.Jenkinsfile (template used on every branch) + branch updater
+├── monitoring/    kube-prometheus-stack values
+└── Jenkinsfile    deploy job: apply manifests, wait for rollouts
+<service>          upstream source + Jenkinsfile (build -> Trivy -> push)
 ```
 
-Verify deployment:
+## Running it
+
+```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars    # ssh_key_name, allowed_cidr
+terraform init && terraform apply               # ~15 min
+
+# Jenkins: open the URL from terraform output, add credential dockerhub-cred,
+# create a Multibranch Pipeline pointing at this repo. It discovers 12 branches.
+# Build the 11 service branches once, then run the main-branch job to deploy.
+
+aws eks update-kubeconfig --name online-boutique --region <region>
+kubectl -n webapps get svc frontend-external    # public hostname
 ```
-kubectl get pods
-kubectl get services
-```
 
-### Jenkins Setup
+## Decisions and trade-offs
 
-Configure Jenkins multibranch pipeline pointing to this repository. Jenkins will automatically discover all 12 service branches and create individual pipelines for each.
+- **Branch-per-service, not repo-per-service.** Upstream is a monorepo; splitting into branches lets Jenkins multibranch give each service an isolated pipeline without eleven repositories to administer. On a client project with a real team I'd use a monorepo with path filters instead — branches-as-services makes cross-service changes awkward.
+- **Trivy blocks on fixable CRITICALs only.** Unfixed CVEs in base images are logged, not blocking; otherwise nothing would ever ship.
+- **Jenkins authenticates to EKS through its instance role (EKS access entry), not a stored service-account token.** The original tutorial pattern of pasting a long-lived kube token into Jenkins credentials is one leaked credential away from cluster admin.
+- **Resource requests/limits on every container.** Upstream ships them; I kept them, because a cluster with eleven unbounded services is a noisy-neighbour problem waiting to happen.
+- **`frontend-external` is a classic LoadBalancer Service.** Simple and enough for a demo. Production gets an ingress with TLS.
 
-## Monitoring
+## What I'd change before calling this production
 
-The platform uses Prometheus for metrics collection and Grafana for visualization. This provides visibility into service health, performance, and resource utilization across the entire platform.
+- ECR instead of Docker Hub, pulled via IRSA.
+- Pin image tags in the manifests and have the deploy job update them (GitOps), instead of `:latest` + rollout restart.
+- A staging namespace with the same manifests and a promotion step.
+- Istio or Linkerd for mTLS between services — the annotations are already there upstream.
+- Distributed tracing (the services already emit OpenTelemetry).
 
-## Security
+---
 
-- Secrets managed through Kubernetes Secrets and AWS Secrets Manager
-- Container image scanning before deployment
-- Network policies for service isolation
-- IAM roles for AWS resource access
-
-## Future Enhancements
-
-- Service mesh implementation (Istio/Linkerd)
-- Distributed tracing across services
-- Canary deployment strategy
-- Multi-region deployment
-- Enhanced observability and logging
-
-## Author
-
-**Hammad Khalid**  
-DevOps Engineer | AWS, Kubernetes, CI/CD Automation
-
-GitHub: https://github.com/hammad558  
-LinkedIn: https://linkedin.com/in/hammad-khalid99  
-
-
-
+**Hammad Khalid** — DevOps Engineer · [GitHub](https://github.com/hammad558) · [LinkedIn](https://linkedin.com/in/hammad-khalid99)
