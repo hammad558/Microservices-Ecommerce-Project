@@ -12,7 +12,7 @@ terraform {
   # backend "s3" {
   #   bucket         = "hammad-tfstate"
   #   key            = "online-boutique/terraform.tfstate"
-  #   region         = "us-east-2"
+  #   region         = "us-east-1"
   #   dynamodb_table = "terraform-locks"
   #   encrypt        = true
   # }
