@@ -14,8 +14,10 @@ for svc in "${SERVICES[@]}"; do
   echo "==> $svc"
   git checkout -q "$svc"
   cp "$TEMPLATE" Jenkinsfile
-  # any leftover tutorial handle in the branch (compose files, scripts, k8s yaml)
-  grep -rl 'adijaiswal' . --exclude-dir=.git | xargs -r sed -i "s/adijaiswal/${DOCKERHUB_USER}/g"
+  # any leftover tutorial handle in the branch (compose files, scripts, k8s yaml).
+  # On branches whose only mention was the Jenkinsfile we just overwrote, grep
+  # matches nothing and exits 1 -- not an error here, so don't let pipefail abort.
+  grep -rl 'adijaiswal' . --exclude-dir=.git | xargs -r sed -i "s/adijaiswal/${DOCKERHUB_USER}/g" || true
   git add -A
   git commit -qm "ci($svc): build, Trivy scan and push under own registry; tag by git SHA" || echo "   (no change)"
 done
